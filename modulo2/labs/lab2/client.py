@@ -23,7 +23,7 @@ while entrada != 'f':
 	msg = sock.recv(1024)
 	result = msg.decode('utf-8')
 
-	if(result == None):
+	if(result == "0"):
 		print("ERRO: Arquivo não encontrado!")
 	else:
 		print(result)

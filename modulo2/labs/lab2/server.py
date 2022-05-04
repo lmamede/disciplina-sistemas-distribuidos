@@ -41,8 +41,8 @@ while True: #fica em loop esperando pelo ativo
 		novoSock.send(encode_res)                                          #envia o resultado
 
 	except  FileNotFoundError as e:                                           #trata a inexistencia do arquivo no diretorio
-		novoSock.send("0")
-		break
+		novoSock.send(bytes("0", "utf-8"))
+		continue
 
 
 #fechar o descritor de socket da conexao
