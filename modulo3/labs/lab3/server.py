@@ -1,6 +1,14 @@
 import socket
 from operator import itemgetter
 import json
+import select
+import sys
+
+HOST = '' #interface padrao de comunicacao da maquina
+PORTA = 5000 #identifica o processo na maquina
+
+inputs = [sys.stdin]
+conn = {}
 
 #Trata erro caso arquivo nao seja encontrado
 def treatError(novoSock):
@@ -10,6 +18,8 @@ def treatError(novoSock):
 def findFile(msg, novoSock):
 	try:
 		name = msg.decode("utf-8")
+		print("Buscando arquivo", msg)
+
 		file = open(name, "r")
 		return file
 	except:
@@ -48,39 +58,93 @@ def packResults(d):
 	encode_res = json.dumps(res, indent=2).encode('utf-8')
 	return encode_res
 
-HOST = '' #interface padrao de comunicacao da maquina
-PORTA = 5000 #identifica o processo na maquina
 
-#criar o descritor socket
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #internet e TCP
+def prepareServer():
+	#criar o descritor socket
+	sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #internet e TCP
 
-#vincular o endereco e porta
-sock.bind((HOST, PORTA))
+	#vincular o endereco e porta
+	sock.bind((HOST, PORTA))
 
-#colocar-se em modo de espera 
-sock.listen(1) #argumento indica a quantidade de conexoes pendentes
+	#colocar-se em modo de espera 
+	sock.listen(1) #argumento indica a quantidade de conexoes pendentes
 
-#aceitar conexao
-novoSock, endereco = sock.accept()
-print('Conectado com: ' + str(endereco))
+	sock.setblocking(False)
+	inputs.append(sock)
+
+	return sock
+
+def startClient(sock):
+	global conn
+
+	client, addr = sock.accept()
+	print('Conectado com: ' + str(addr))
+	client.setblocking(False)
+	conn[client] = addr
+	inputs.append(client)
+
+def stopClient(client):
+	global conn
+
+	client.close()
+	if conn.values > 0: conn.remove(client)
+	inputs.remove(client)
 
 
+def startFileFinderService(client):
+#	try:
+		#aceitar conexao
+		msg = client.recv(1024) #argumento indica quantidade maxima de bytes
+		if not msg: return #trata o encerramento da conexao pelo lado ativo
+
+		file = findFile(msg, client)
+		if file != None: processFile(client, file)
+#	except:	
+#		stopClient(client)
+
+def startServerConsoleService(sock):
+	global conn
+	command = input()
+	if command == 'stop':
+		if len(conn) == 0:
+			sock.close()
+			sys.exit()
+		else:
+			print("Existem conexoes ativas, aguarde e tente novamente mais tarde.")
+	if command == 'connections':
+		print("Existem ",len(conn), " conexoes ativas")
+
+	if command == 'drop':
+		print("Derrubando todas as conexoes")
+		conn.clear()
+
+	if command == 'help':
+		print("\n\tstop: para o server",\
+		"\n\tconnections: mostra quantidade de conexões ativas",\
+		"\n\tdrop: derruba todas as conexoes ativas",\
+		"\n\thelp: mostra esse painel")
+
+sock = prepareServer()
+
+print("Bem vindo ao console de administrador do server,"\
+"\ndigite help para mostrar as opcoes de gerenciamento")
 
 while True: #fica em loop esperando pelo ativo
+#	try:
+		r, w, e = select.select(inputs, [], [])
+		for request in r:
+			if request == sock:
+				startClient(sock)
 
-	msg = novoSock.recv(1024) #argumento indica quantidade maxima de bytes
-	if not msg: break #trata o encerramento da conexao pelo lado ativo
+			elif request == sys.stdin:
+				startServerConsoleService(sock)
 
-	try:
-		file = findFile(msg, novoSock)
-		if file == None: continue
-		processFile(novoSock, file)
-	except:
-		print("Erro! Desligando servidor...")
-		break
+			else:
+				startFileFinderService(request)
 
-#fechar o descritor de socket da conexao
-novoSock.close()
+#	except:
+#		print("Erro! Desligando servidor...")
+#		break
 
 #fechar o descritor de socket principal
 sock.close()

@@ -32,4 +32,5 @@ while entrada != 'f':
 	entrada = input()
 
 #encerrar a conexao
+sock.send(bytes("", "utf-8"))
 sock.close()
