@@ -3,12 +3,17 @@ from operator import itemgetter
 import json
 import select
 import sys
+import threading
+
 
 HOST = '' #interface padrao de comunicacao da maquina
 PORTA = 5000 #identifica o processo na maquina
 
 inputs = [sys.stdin]
 conn = {}
+threadClients = []
+
+lock = threading.Lock()
 
 #Trata erro caso arquivo nao seja encontrado
 def treatError(novoSock):
@@ -18,7 +23,7 @@ def treatError(novoSock):
 def findFile(msg, novoSock):
 	try:
 		name = msg.decode("utf-8")
-		print("Buscando arquivo", msg)
+		print("[",conn[novoSock],"] Buscando arquivo", msg)
 
 		file = open(name, "r")
 		return file
@@ -74,49 +79,80 @@ def prepareServer():
 
 	return sock
 
+#Criando conexao com cliente 
+#adiciona as informacoes dos clientes no dicionario
+#inicia a thread e aloca a referencia em threadClients
 def startClient(sock):
 	global conn
 
 	client, addr = sock.accept()
 	print('Conectado com: ' + str(addr))
-	client.setblocking(False)
-	conn[client] = addr
-	inputs.append(client)
 
+	lock.acquire()
+	conn[client] = addr
+	lock.release()
+
+	threadClient = threading.Thread(target=startFileFinderService, args=(client,))
+	threadClient.start()
+	threadClients.append(threadClient)
+
+#Encerra cliente
+#Exclui cliente do dicionario
 def stopClient(client):
 	global conn
 
+	lock.acquire()
+	if len(conn) > 0: 
+		del conn[client]
+
+	lock.release()
 	client.close()
-	if conn.values > 0: conn.remove(client)
-	inputs.remove(client)
+	print("[INFO] Conexao encerrada!")
 
-
+#recebe entrada do cliente
+#se vazia, encerra o cliente
+#se nao, busca o arquivo e processa as ocorrencias
+#em caso de erro nas etapas anteriores, encerra o cliente
 def startFileFinderService(client):
-#	try:
-		#aceitar conexao
-		msg = client.recv(1024) #argumento indica quantidade maxima de bytes
-		if not msg: return #trata o encerramento da conexao pelo lado ativo
+	try:
+		while True:
+			msg = client.recv(1024) #argumento indica quantidade maxima de bytes
 
-		file = findFile(msg, client)
-		if file != None: processFile(client, file)
-#	except:	
-#		stopClient(client)
+			if not msg: 
+				print("[INFO] Cliente encerrou conexao")
+				stopClient(client) 
+				return 
 
+			file = findFile(msg, client)
+			if file != None: processFile(client, file)
+	except:	
+		print("[ERROR] Erro ao receber entrada. Encerrando conexao com cliente!")
+		stopClient(client)
+#Menuzinho de interacao com o servidor
+#oferece os comandos para encerrar
+#derrubar as conexoes encerrando os clientes
+#mostra o total de clientes ativos
+#oferece um manual dos comandos
 def startServerConsoleService(sock):
 	global conn
 	command = input()
 	if command == 'stop':
 		if len(conn) == 0:
+			print("Encerrando servidor")
 			sock.close()
 			sys.exit()
 		else:
-			print("Existem conexoes ativas, aguarde e tente novamente mais tarde.")
+			print("[WARN] Existem conexoes ativas, aguarde e tente novamente mais tarde.")
 	if command == 'connections':
-		print("Existem ",len(conn), " conexoes ativas")
+		print(">>> Existem ",len(conn), " conexoes ativas")
 
 	if command == 'drop':
-		print("Derrubando todas as conexoes")
+		print("[INFO] Derrubando todas as conexoes")
+		for client in threadClients:
+			client.join()
 		conn.clear()
+		threadClients.clear()
+		print("[INFO] Conexoes derrubadas")
 
 	if command == 'help':
 		print("\n\tstop: para o server",\
@@ -129,22 +165,19 @@ sock = prepareServer()
 print("Bem vindo ao console de administrador do server,"\
 "\ndigite help para mostrar as opcoes de gerenciamento")
 
-while True: #fica em loop esperando pelo ativo
-#	try:
+while True: #fica em loop esperando entrada
+	try:
 		r, w, e = select.select(inputs, [], [])
 		for request in r:
-			if request == sock:
+			if request == sock: #se for um cliente novo, inicia 
 				startClient(sock)
 
-			elif request == sys.stdin:
+			elif request == sys.stdin: #se for um input, abre o console
 				startServerConsoleService(sock)
 
-			else:
-				startFileFinderService(request)
-
-#	except:
-#		print("Erro! Desligando servidor...")
-#		break
+	except:
+		print("Erro! Desligando servidor...")
+		break
 
 #fechar o descritor de socket principal
 sock.close()
